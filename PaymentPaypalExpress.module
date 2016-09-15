@@ -1,0 +1,222 @@
+<?php
+
+/**
+ * 
+ * ProcessWire
+ * Copyright (C) 2014 by Ryan Cramer 
+ * Licensed under GNU/GPL v2, see LICENSE.TXT
+ * 
+ * http://processwire.com
+ *
+ */
+
+class PaymentPaypalExpress extends PaymentModule {
+
+	public static function getModuleInfo() {
+		return array(
+			'title' => 'PaymentPaypalExpress', 
+			'version' => 001, 
+			'summary' => 'Paypal payment module for Padloper using Express checkout',
+			'singular' => false,
+			'autoload' => false, 
+			'requires' => 'PaymentModule',
+			'author' => 'Rupert Dunk'
+		);
+	}
+
+	static public function getDefaults() {
+		return array(
+			"formId" => "checkout-form"
+		);
+	}
+
+	public function init() {
+		require_once(__DIR__ . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'Braintree.php');
+		$this->currency = $this->defaultCurrency;
+		if ($this->accessToken) {
+			$this->gateway = new Braintree_Gateway(array(
+			    'accessToken' => $this->accessToken,
+			));
+		}
+	}
+
+	private function validateBusinessName($name) {
+		$length = strlen($name);
+		if ($length > 12) {
+			$name = substr($name, 0, 12);
+		} else if ($length < 12 && $length > 7) {
+			$name = substr($name, 0, 7);
+		} else if ($length < 7 && $length > 3) {
+			$name = substr($name, 0, 3);
+		}
+		return $name;
+	}
+
+	private function generateAccessToken() {
+		return $this->gateway->clientToken()->generate();
+	}
+
+	private function calculateAmount() {
+		return $this->getTotalAmount() / 100;
+	}
+
+	private function validateDescription($description) {
+		if ( strlen($description) > 127 ) {
+			$description = substr($description, 0, 127);
+		}
+		return $description;
+	}
+
+	public function getTitle() {
+		return $this->_("PayPal Express");
+	}
+
+	public function processPayment() {
+		$arr = [
+			"amount" => $this->calculateAmount(),
+			"merchantAccountId" => $this->currency,
+			"paymentMethodNonce" => $this->input->post->payment_method_nonce,
+			"orderId" => $this->id,
+			"descriptor" => [
+				"name" => $this->businessName."*WebOrder"
+			]
+		];
+		// add Paypal params
+		if ($this->paypalDescription) {
+			$arr["options"]["paypal"]["description"] = $this->validateDescription($this->paypalDescription);
+		}
+		if ($this->paypalCustomField) {
+			$arr["options"]["paypal"]["customField"] = ( strlen($this->customField) > 127 ) ? substr($this->customField, 0, 127) : $this->customField;	
+		}
+
+		$result = $this->gateway->transaction()->sale($arr);
+		if ($result->success) {
+			$this->log("Transaction Successful: ".$result->transaction->id);
+			return true;
+		} else {
+			$this->log(json_encode($arr));
+			$this->log("Transaction Failed: ".$result->message);
+			return false;
+		}
+	}
+
+	public function render() {
+		$this->log($this->businessName);
+
+		if ($this->getTotalAmount() <= 0) throw new WireException("Products are not set");
+		if ($this->processUrl == '') throw new WireException("processUrl is not set");
+		if ($this->accessToken == '') throw new WireException("accessToken is not set");
+
+		$out = "
+		<form id='{$this->formId}' action='{$this->processUrl}' method='POST'><div id='paypal-container'></div></form>
+		<script src='https://js.braintreegateway.com/js/braintree-2.28.0.min.js'></script>
+		<script>
+			var opts = {
+				paypal: {
+					container: 'paypal-container',
+					singleUse: true,
+					amount: '{$this->calculateAmount()}',
+					currency: '{$this->currency}',
+					locale: '{$this->locale}'
+				},
+				onPaymentMethodReceived: function (obj) {
+					var form = document.getElementById('{$this->formId}'),
+						input = document.createElement('input');
+
+					input.setAttribute('type', 'hidden');
+					input.setAttribute('name', 'payment_method_nonce');
+					input.setAttribute('value', obj.nonce);
+
+					form.appendChild(input);
+					form.submit();
+				}
+			};
+			braintree.setup('{$this->generateAccessToken()}', 'custom', opts);
+		</script>";
+
+		return $out;
+	}
+
+	public static function getModuleConfigInputfields(array $data) {
+		$data = array_merge(self::getDefaults(), $data);
+		$inputfields = new InputfieldWrapper();
+		$modules = wire('modules');
+
+		$requiredFields = $modules->get("InputfieldFieldset");
+		$requiredFields->label = __('Required Fields');
+
+		$f = $modules->get('InputfieldText');
+		$f->name = 'formId';
+		$f->label = __("Form ID");
+		$f->notes = __("ID attached to dynamically generated form element");
+		$f->required = 1;
+		$f->columnWidth = 100;
+		if(isset($data['formId'])) $f->value = $data['formId'];
+		$requiredFields->add($f);
+
+		$f = $modules->get('InputfieldText');
+		$f->name = 'currency';
+		$f->label = __("Default currency");
+		$f->notes = __("Use this currency by default (always possible to overwrite when using this module from API)");
+		$f->required = 1;
+		$f->columnWidth = 100;
+		if(isset($data['currency'])) $f->value = $data['currency'];
+		$requiredFields->add($f);
+
+		$f = $modules->get('InputfieldText');
+		$f->name = 'locale';
+		$f->label = __("Locale");
+		$f->required = 1;
+		$f->columnWidth = 100;
+		$f->notes = __("Locale code, ie. en_gb, en_us. Supported codes are listed [here](https://developer.paypal.com/docs/classic/api/locale_codes/).");
+		if(isset($data['locale'])) $f->value = $data['locale'];
+		$requiredFields->add($f);
+
+		$f = $modules->get('InputfieldText');
+		$f->name = 'accessToken';
+		$f->label = __("Access Token");
+		$f->notes = __("PayPal Access Token. Get your sandbox token [here](https://developer.paypal.com/developer/applications/) and live token [here](https://www.paypal.com/businessexp/api/accesstoken). This module uses the v.zero SDK.");
+		$f->required = 1;
+		$f->columnWidth = 100;
+		if(isset($data['accessToken'])) $f->value = $data['accessToken'];
+		$requiredFields->add($f);
+
+		$inputfields->add($requiredFields);
+
+		$optionalFields = $modules->get("InputfieldFieldset");
+		$optionalFields->label = __('Optional Fields');
+
+		$f = $modules->get('InputfieldText');
+		$f->name = 'businessName';
+		$f->label = __("Business Name");
+		$f->notes = __("The value in the business name field of a customer's statement. This must be either 3, 7 or 12 characters long.");
+		$f->columnWidth = 100;
+		$f->value = $data['businessName'];
+		if (isset($_POST['businessName']) && $_POST['businessName'] != $data['businessName']) {
+			$validatedName = self::validateBusinessName($_POST['businessName']);
+			$f->value = $validatedName;
+			$_POST['businessName'] = $validatedName;
+		}
+		$optionalFields->add($f);
+
+		$f = $modules->get('InputfieldText');
+		$f->name = 'paypalCustomField';
+		$f->label = __("PayPal Custom Field");
+		$f->notes = __("Variable passed directly to PayPal via the API for your own tracking purposes. Customers do not see this value, but you can see it in reports from your PayPal console.");
+		$f->columnWidth = 100;
+		if(isset($data['paypalCustomField'])) $f->value = $data['paypalCustomField'];
+		$optionalFields->add($f);
+
+		$f = $modules->get('InputfieldText');
+		$f->name = 'paypalDescription';
+		$f->label = __("PayPal Description");
+		$f->notes = __("Description of the transaction that is displayed to customers in PayPal email receipts. Max 127 characters.");
+		$f->columnWidth = 100;
+		if(isset($data['paypalDescription'])) $f->value = $data['paypalDescription'];
+		$optionalFields->add($f);
+
+		$inputfields->add($optionalFields);
+
+		return $inputfields;
+	}
+}
