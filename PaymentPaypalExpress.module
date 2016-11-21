@@ -1,4 +1,4 @@
-<?php
+<?php namespace ProcessWire;
 
 /**
  * 
@@ -15,7 +15,7 @@ class PaymentPaypalExpress extends PaymentModule {
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'PaymentPaypalExpress', 
-			'version' => 001, 
+			'version' => '1.0.0',
 			'summary' => 'Paypal payment module for Padloper using Express checkout',
 			'singular' => false,
 			'autoload' => false, 
@@ -26,15 +26,15 @@ class PaymentPaypalExpress extends PaymentModule {
 
 	static public function getDefaults() {
 		return array(
-			"formId" => "checkout-form"
+			"formId" => "checkout-form",
+			"notificationHTML" => ""
 		);
 	}
 
 	public function init() {
-		require_once(__DIR__ . DIRECTORY_SEPARATOR . 'lib' . DIRECTORY_SEPARATOR . 'Braintree.php');
 		$this->currency = $this->defaultCurrency;
 		if ($this->accessToken) {
-			$this->gateway = new Braintree_Gateway(array(
+			$this->gateway = new \Braintree_Gateway(array(
 			    'accessToken' => $this->accessToken,
 			));
 		}
@@ -76,12 +76,15 @@ class PaymentPaypalExpress extends PaymentModule {
 			"amount" => $this->calculateAmount(),
 			"merchantAccountId" => $this->currency,
 			"paymentMethodNonce" => $this->input->post->payment_method_nonce,
-			"orderId" => $this->id,
-			"descriptor" => [
-				"name" => $this->businessName."*WebOrder"
-			]
+			"orderId" => $this->id
 		];
-		// add Paypal params
+		// add optional params
+		if ($this->businessName) {
+			$arr["descriptor"]["name"] = $this->businessName."*WebOrder";
+		}
+		if ($this->submitForSettlement) {
+			$arr["options"]["submitForSettlement"] = true;
+		}
 		if ($this->paypalDescription) {
 			$arr["options"]["paypal"]["description"] = $this->validateDescription($this->paypalDescription);
 		}
@@ -101,37 +104,63 @@ class PaymentPaypalExpress extends PaymentModule {
 	}
 
 	public function render() {
-		$this->log($this->businessName);
-
 		if ($this->getTotalAmount() <= 0) throw new WireException("Products are not set");
 		if ($this->processUrl == '') throw new WireException("processUrl is not set");
 		if ($this->accessToken == '') throw new WireException("accessToken is not set");
 
 		$out = "
-		<form id='{$this->formId}' action='{$this->processUrl}' method='POST'><div id='paypal-container'></div></form>
-		<script src='https://js.braintreegateway.com/js/braintree-2.28.0.min.js'></script>
+		<script src='https://js.braintreegateway.com/web/3.5.0/js/client.min.js'></script>
+		<script src='https://js.braintreegateway.com/web/3.5.0/js/paypal.min.js'></script>
+		<script src='https://www.paypalobjects.com/api/button.js?'
+		     data-merchant='braintree'
+		     data-id='paypal-button'
+		     data-button='checkout'
+		     data-color='blue'
+		     data-size='medium'
+		     data-shape='pill'
+		     data-button_type='submit'
+		     data-button_disabled='false'
+		 ></script>
+		 <form id='{$this->formId}' action='{$this->processUrl}' method='POST'><div id='paypal-container'></div></form>
 		<script>
-			var opts = {
-				paypal: {
-					container: 'paypal-container',
-					singleUse: true,
-					amount: '{$this->calculateAmount()}',
-					currency: '{$this->currency}',
-					locale: '{$this->locale}'
-				},
-				onPaymentMethodReceived: function (obj) {
-					var form = document.getElementById('{$this->formId}'),
-						input = document.createElement('input');
 
-					input.setAttribute('type', 'hidden');
-					input.setAttribute('name', 'payment_method_nonce');
-					input.setAttribute('value', obj.nonce);
+		// Fetch the button you are using to initiate the PayPal flow
+		var paypalButton = document.getElementById('paypal-button');
 
-					form.appendChild(input);
-					form.submit();
-				}
-			};
-			braintree.setup('{$this->generateAccessToken()}', 'custom', opts);
+		// Create a Client component
+		braintree.client.create({
+			authorization: '{$this->generateAccessToken()}'
+		}, function (clientErr, clientInstance) {
+			// Create PayPal component
+			braintree.paypal.create({
+				client: clientInstance
+			}, function (err, paypalInstance) {
+				paypalButton.addEventListener('click', function () {
+					// Tokenize here!
+					paypalInstance.tokenize({
+						flow: 'checkout',
+						amount: '{$this->calculateAmount()}',
+						currency: '{$this->currency}',
+						locale: '{$this->locale}'
+					}, function (err, tokenizationPayload) {
+						if (err) {
+							console.log(err);
+						} else {
+							var form = document.getElementById('{$this->formId}'),
+								input = document.createElement('input');
+
+							input.setAttribute('type', 'hidden');
+							input.setAttribute('name', 'payment_method_nonce');
+							input.setAttribute('value', tokenizationPayload.nonce);
+
+							form.appendChild(input);
+							form.insertAdjacentHTML('beforeend', '{$this->notificationHTML}');
+							form.submit();
+						}
+					});
+				});
+			});
+		});
 		</script>";
 
 		return $out;
@@ -148,18 +177,19 @@ class PaymentPaypalExpress extends PaymentModule {
 		$f = $modules->get('InputfieldText');
 		$f->name = 'formId';
 		$f->label = __("Form ID");
-		$f->notes = __("ID attached to dynamically generated form element");
+		$f->description = __("ID attached to dynamically generated form element");
 		$f->required = 1;
-		$f->columnWidth = 100;
+		$f->columnWidth = 33;
 		if(isset($data['formId'])) $f->value = $data['formId'];
 		$requiredFields->add($f);
 
 		$f = $modules->get('InputfieldText');
 		$f->name = 'currency';
 		$f->label = __("Default currency");
-		$f->notes = __("Use this currency by default (always possible to overwrite when using this module from API)");
+		$f->description = __("Use this currency by default");
+		$f->notes = __("Always possible to overwrite when using this module from API");
 		$f->required = 1;
-		$f->columnWidth = 100;
+		$f->columnWidth = 33;
 		if(isset($data['currency'])) $f->value = $data['currency'];
 		$requiredFields->add($f);
 
@@ -167,15 +197,16 @@ class PaymentPaypalExpress extends PaymentModule {
 		$f->name = 'locale';
 		$f->label = __("Locale");
 		$f->required = 1;
-		$f->columnWidth = 100;
-		$f->notes = __("Locale code, ie. en_gb, en_us. Supported codes are listed [here](https://developer.paypal.com/docs/classic/api/locale_codes/).");
+		$f->columnWidth = 33;
+		$f->description = __("PayPal Specific Locale Code");
+		$f->notes = __("ie. en_gb, en_us. Supported codes are listed [here](https://developer.paypal.com/docs/classic/api/locale_codes/).");
 		if(isset($data['locale'])) $f->value = $data['locale'];
 		$requiredFields->add($f);
 
 		$f = $modules->get('InputfieldText');
 		$f->name = 'accessToken';
 		$f->label = __("Access Token");
-		$f->notes = __("PayPal Access Token. Get your sandbox token [here](https://developer.paypal.com/developer/applications/) and live token [here](https://www.paypal.com/businessexp/api/accesstoken). This module uses the v.zero SDK.");
+		$f->notes = __("Get your sandbox token [here](https://developer.paypal.com/developer/applications/) and live token [here](https://www.paypal.com/businessexp/api/accesstoken). This module uses the v.zero SDK.");
 		$f->required = 1;
 		$f->columnWidth = 100;
 		if(isset($data['accessToken'])) $f->value = $data['accessToken'];
@@ -186,10 +217,30 @@ class PaymentPaypalExpress extends PaymentModule {
 		$optionalFields = $modules->get("InputfieldFieldset");
 		$optionalFields->label = __('Optional Fields');
 
+		$f = $modules->get('InputfieldCheckbox');
+		$f->name = 'submitForSettlement';
+		$f->label = __("Submit for Settlement");
+		$f->description = __("Check this box to automatically submit the transaction for settlement.");
+		$f->notes = __("If this is left unticked, you will need to manually settle each transaction from your PayPal dashboard.");
+		$f->columnWidth = 100;
+		$f->icon = "important";
+		$f->value = 1;
+		$f->attr('checked', empty($data['submitForSettlement']) ? '' : 'checked');
+		$optionalFields->add($f);
+
+		$f = $modules->get('InputfieldTextarea');
+		$f->name = 'notificationHTML';
+		$f->label = __("Processing Notification HTML");
+		$f->description = __("HTML added after the PayPal payment button after completing PayPal checkout flow.");
+		$f->columnWidth = 100;
+		if(isset($data['notificationHTML'])) $f->value = $data['notificationHTML'];
+		$optionalFields->add($f);
+
 		$f = $modules->get('InputfieldText');
 		$f->name = 'businessName';
 		$f->label = __("Business Name");
-		$f->notes = __("The value in the business name field of a customer's statement. This must be either 3, 7 or 12 characters long.");
+		$f->description = __("The value in the business name field of a customer's statement.");
+		$f->notes = __("This must be either 3, 7 or 12 characters long.");
 		$f->columnWidth = 100;
 		$f->value = $data['businessName'];
 		if (isset($_POST['businessName']) && $_POST['businessName'] != $data['businessName']) {
@@ -202,7 +253,7 @@ class PaymentPaypalExpress extends PaymentModule {
 		$f = $modules->get('InputfieldText');
 		$f->name = 'paypalCustomField';
 		$f->label = __("PayPal Custom Field");
-		$f->notes = __("Variable passed directly to PayPal via the API for your own tracking purposes. Customers do not see this value, but you can see it in reports from your PayPal console.");
+		$f->description = __("Variable passed directly to PayPal via the API for your own tracking purposes. Customers do not see this value, but you can see it in reports from your PayPal console.");
 		$f->columnWidth = 100;
 		if(isset($data['paypalCustomField'])) $f->value = $data['paypalCustomField'];
 		$optionalFields->add($f);
@@ -210,7 +261,8 @@ class PaymentPaypalExpress extends PaymentModule {
 		$f = $modules->get('InputfieldText');
 		$f->name = 'paypalDescription';
 		$f->label = __("PayPal Description");
-		$f->notes = __("Description of the transaction that is displayed to customers in PayPal email receipts. Max 127 characters.");
+		$f->description = __("Description of the transaction that is displayed to customers in PayPal email receipts.");
+		$f->notes = __("Max 127 characters.");
 		$f->columnWidth = 100;
 		if(isset($data['paypalDescription'])) $f->value = $data['paypalDescription'];
 		$optionalFields->add($f);

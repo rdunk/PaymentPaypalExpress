@@ -1,0 +1,20 @@
+{
+  "name": "rdunk/PaymentPaypalExpress",
+  "type": "pw-module",
+  "description": "Payment Module for Paypal Express Checkout",
+  "keywords": [ "processwire", "module" ],
+  "homepage": "http://modules.processwire.com",
+  "license": "MPL-2.0",
+  "authors": [
+    {
+      "name": "Rupert Dunk",
+      "email": "rupert@rupertdunk.com.com",
+      "homepage": "https://domain.com",
+      "role": "Developer"
+    }
+  ],
+  "require": {
+    "hari/pw-module": "~1.0",
+    "braintree/braintree_php": "*",
+  }
+}
