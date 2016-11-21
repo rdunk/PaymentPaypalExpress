@@ -15,7 +15,7 @@ class PaymentPaypalExpress extends PaymentModule {
 	public static function getModuleInfo() {
 		return array(
 			'title' => 'PaymentPaypalExpress', 
-			'version' => '1.0.0',
+			'version' => '1.0.1',
 			'summary' => 'Paypal payment module for Padloper using Express checkout',
 			'singular' => false,
 			'autoload' => false, 
