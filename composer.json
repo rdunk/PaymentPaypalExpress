@@ -15,6 +15,6 @@
   ],
   "require": {
     "hari/pw-module": "~1.0",
-    "braintree/braintree_php": "*",
+    "braintree/braintree_php": "*"
   }
 }
