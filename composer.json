@@ -1,9 +1,8 @@
 {
-  "name": "rdunk/PaymentPaypalExpress",
+  "name": "rdunk/payment-paypal-express",
   "type": "pw-module",
   "description": "Payment Module for Paypal Express Checkout",
   "keywords": [ "processwire", "module" ],
-  "homepage": "http://modules.processwire.com",
   "license": "MPL-2.0",
   "authors": [
     {
